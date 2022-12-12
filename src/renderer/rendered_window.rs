@@ -4,8 +4,8 @@ use skia_safe::{
     canvas::{SaveLayerRec, SrcRectConstraint},
     gpu::{Budgeted, SurfaceOrigin},
     image_filters::blur,
-    BlendMode, Canvas, Color, Image, ImageInfo, Paint, Point, Rect, SamplingOptions, Surface,
-    SurfaceProps, SurfacePropsFlags,
+    BlendMode, Canvas, Color, Image, ImageInfo, Paint, Point, Rect, SamplingOptions,
+    Surface, SurfaceProps, SurfacePropsFlags, FilterMode, runtime_effect::ChildPtr, Data,
 };
 
 use crate::{
@@ -14,6 +14,8 @@ use crate::{
     profiling::tracy_zone,
     redraw_scheduler::REDRAW_SCHEDULER,
     renderer::{animation_utils::*, GridRenderer, RendererSettings},
+    settings::*,
+    cmd_line::CmdLineSettings,
 };
 use winit::dpi::PhysicalSize;
 
@@ -328,12 +330,59 @@ impl RenderedWindow {
         let scroll_offset =
             (self.current_surface.vertical_position - self.current_scroll) * font_height as f32;
         let snapshot = self.current_surface.surface.image_snapshot();
-        root_canvas.draw_image_rect(
-            snapshot,
-            None,
-            pixel_region.with_offset((0.0, scroll_offset)),
-            &paint,
-        );
+
+        let glow = SETTINGS.get::<CmdLineSettings>()._glow;
+        if glow {
+            let sksl ="
+    uniform shader image;
+
+    half4 main(float2 tex_coord) {
+        float bloom_spread = 1.5;
+        float bloom_intensity = 1;
+        float uv_x = tex_coord.x;
+        float uv_y = tex_coord.y;
+        float4 sum = float4(0.0);
+        for (int n = 0; n < 9; ++n) {
+            float uv_y = (tex_coord.y) + (bloom_spread * float(n - 4));
+            float4 h_sum = vec4(0.0);
+            h_sum += image.eval(float2(uv_x - (4.0 * bloom_spread), uv_y));
+            h_sum += image.eval(float2(uv_x - (3.0 * bloom_spread), uv_y));
+            h_sum += image.eval(float2(uv_x - (2.0 * bloom_spread), uv_y));
+            h_sum += image.eval(float2(uv_x - bloom_spread, uv_y));
+            h_sum += image.eval(float2(uv_x, uv_y));
+            h_sum += image.eval(float2(uv_x + bloom_spread, uv_y));
+            h_sum += image.eval(float2(uv_x + (2.0 * bloom_spread), uv_y));
+            h_sum += image.eval(float2(uv_x + (3.0 * bloom_spread), uv_y));
+            h_sum += image.eval(float2(uv_x + (4.0 * bloom_spread), uv_y));
+            sum += h_sum / 9.0;
+        }
+        return image.eval(tex_coord) + ((sum / 9.0) * bloom_intensity);
+    }
+";
+            let shader_image = snapshot.to_shader(None, SamplingOptions::from(FilterMode::Linear), None).unwrap();
+            let runtime_effect = skia_safe::runtime_effect::RuntimeEffect::make_for_shader(sksl, None).unwrap();
+
+            let children: [ChildPtr; 1] = [
+                ChildPtr::Shader(shader_image)
+            ];
+
+            let full_shader = runtime_effect.make_shader(
+                Data::new_empty(),
+                &children,
+                None
+                );
+            paint.set_shader(full_shader);
+
+            root_canvas.draw_paint(&paint);
+
+        } else {
+            root_canvas.draw_image_rect(
+                 snapshot,
+                 None,
+                 pixel_region.with_offset((0.0, scroll_offset as f32)),
+                 &paint,
+            );
+        }
 
         root_canvas.restore();
 

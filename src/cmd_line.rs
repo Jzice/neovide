@@ -66,6 +66,10 @@ pub struct CmdLineSettings {
     #[arg(long = "nofork")]
     pub no_fork: bool,
 
+    /// font glow on startup
+    #[arg(long = "glow", action = ArgAction::SetTrue, value_parser = FalseyValueParser::new())]
+    pub _glow: bool,
+
     /// Render every frame, takes more power and CPU time but possibly helps with frame timing
     /// issues
     #[arg(long = "noidle", env = "NEOVIDE_IDLE", action = ArgAction::SetFalse, value_parser = FalseyValueParser::new())]
